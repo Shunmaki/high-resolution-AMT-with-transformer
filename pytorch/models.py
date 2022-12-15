@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
 from torchlibrosa.stft import Spectrogram, LogmelFilterBank # use 'magphase' to extract phase informatinon with magnitude
 # ref: https://github.com/qiuqiangkong/torchlibrosa
@@ -71,6 +72,49 @@ def init_gru(rnn):
             [_inner_uniform, _inner_uniform, nn.init.orthogonal_]
         )
         torch.nn.init.constant_(getattr(rnn, 'bias_hh_l{}'.format(i)), 0)
+        
+def init_ln(module):
+    if isinstance(module, nn.Embedding):
+        module.weight.data.normal_(mean=0.0, std=1.0)
+        if module.padding_idx is not None:
+            module.weight.data[module.padding_idx].zero_()
+    elif isinstance(module, nn.LayerNorm):
+        module.bias.data.zero_()
+        module.weight.data.fill_(1.0)
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+    
+class TransformerEncoder(nn.Module):
+    def __init__(self, d_model=768, nhead=8):
+        super(TransformerEncoder, self).__init__()
+        
+        self.encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead) #,batch_first=True) torch==1.8.0ではbatch_firstが使えない、、
+        self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=4)
+        
+    def forward(self, inputs):
+        inputs = inputs.transpose(0,1)
+        output = self.transformer_encoder(inputs)
+        output = output.transpose(0,1)
+        return output
 
 
 class ConvBlock(nn.Module):
@@ -172,7 +216,69 @@ class AcousticModelCRnn8Dropout(nn.Module):
         x = F.dropout(x, p=0.5, training=self.training, inplace=False)
         output = torch.sigmoid(self.fc(x))
         return output 
+    
+# アコースティックモデル(Transformer バージョン)
 
+# アコースティックモデル
+class AcousticModelTransformer(nn.Module):
+    def __init__(self, classes_num, midfeat, momentum):
+        super(AcousticModelTransformer, self).__init__()
+
+        self.conv_block1 = ConvBlock(in_channels=1, out_channels=48, momentum=momentum)
+        self.conv_block2 = ConvBlock(in_channels=48, out_channels=64, momentum=momentum)
+        self.conv_block3 = ConvBlock(in_channels=64, out_channels=96, momentum=momentum)
+        self.conv_block4 = ConvBlock(in_channels=96, out_channels=128, momentum=momentum)
+
+        self.fc5 = nn.Linear(midfeat, 768, bias=False)
+        self.bn5 = nn.BatchNorm1d(768, momentum=momentum)
+        
+        self.ln1 = nn.LayerNorm(768)
+        self.pe = PositionalEncoding(d_model=768, dropout=0.1)
+
+        self.fc = nn.Linear(768, classes_num, bias=True)
+        
+        self.encoder_layer = TransformerEncoder()
+        
+        self.init_weight()
+
+    def init_weight(self):
+        init_layer(self.fc5)
+        init_bn(self.bn5)
+        init_layer(self.fc)
+        init_ln(self.ln1)
+
+    def forward(self, input):
+        """
+        Args:
+          input: (batch_size, channels_num, time_steps, freq_bins)
+        Outputs:
+          output: (batch_size, time_steps, classes_num)
+        """
+
+        x = self.conv_block1(input, pool_size=(1, 2), pool_type='avg')
+        x = F.dropout(x, p=0.2, training=self.training)
+        x = self.conv_block2(x, pool_size=(1, 2), pool_type='avg')
+        x = F.dropout(x, p=0.2, training=self.training)
+        x = self.conv_block3(x, pool_size=(1, 2), pool_type='avg')
+        x = F.dropout(x, p=0.2, training=self.training)
+        x = self.conv_block4(x, pool_size=(1, 2), pool_type='avg')
+        x = F.dropout(x, p=0.2, training=self.training) # [batch_size, 128, 1001, 14]
+        
+        x = x.transpose(1, 2).flatten(2)  # [batch_size, 1001, 1792]
+
+        x = F.relu(self.fc5(x)) # [batch_size, 1001, 768]
+        x = self.ln1(x)
+        x = F.dropout(x, p=0.2, training=self.training, inplace=True)  # [batch_size, 1001, 768]
+        x = self.pe(x) # [batch_soze, 1001, 768]
+        
+        x = self.encoder_layer(x)  # [batch_size, 1001, 768]
+        x = F.dropout(x, p=0.5, training=self.training, inplace=False)
+        
+        output = torch.sigmoid(self.fc(x))
+        
+        # この下にTransformerのEncoder部分(4層)を書く(to do)
+        
+        return output
 
 # In[11]:
 
@@ -214,7 +320,7 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
         self.frame_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_onset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_offset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
-        self.velocity_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
         
         # after CRNN block
         # only onset and frame is required

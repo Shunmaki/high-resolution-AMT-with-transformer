@@ -1319,7 +1319,6 @@ class StatisticsContainer(object):
                 
         self.statistics_dict = resume_statistics_dict
 
-
 def load_audio(path, sr=22050, mono=True, offset=0.0, duration=None,
     dtype=np.float32, res_type='kaiser_best', 
     backends=[audioread.ffdec.FFmpegAudioFile]):

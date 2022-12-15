@@ -6,7 +6,7 @@
 
 import os
 import sys
-sys.path.append(os.path.join('..', '/notebooks/maki/high-resolution-AMT/utils'))
+sys.path.append(os.path.join('..', '/notebooks/maki/high-resolution-AMT-with-transformer/utils'))
 #sys.path.insert(1, os.path.join(sys.path[0], '../../autoth'))
 import numpy as np
 import argparse
