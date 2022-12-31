@@ -100,7 +100,9 @@ class PositionalEncoding(nn.Module):
         Args:
             x: Tensor, shape [seq_len, batch_size, embedding_dim]
         """
+        x = x.transpose(0,1)
         x = x + self.pe[:x.size(0)]
+        x = x.transpose(0,1)
         return self.dropout(x)
     
 class TransformerEncoder(nn.Module):
@@ -234,17 +236,23 @@ class AcousticModelTransformer(nn.Module):
         
         self.ln1 = nn.LayerNorm(768)
         self.pe = PositionalEncoding(d_model=768, dropout=0.1)
-
-        self.fc = nn.Linear(768, classes_num, bias=True)
         
         self.encoder_layer = TransformerEncoder()
+
+        self.fc1 = nn.Linear(768, 512, bias=True)
+        self.fc2 = nn.Linear(512, 256, bias=True)
+        self.fc3 = nn.Linear(256, classes_num, bias=False)
+        
+        
         
         self.init_weight()
 
     def init_weight(self):
         init_layer(self.fc5)
         init_bn(self.bn5)
-        init_layer(self.fc)
+        init_layer(self.fc1)
+        init_layer(self.fc2)
+        init_layer(self.fc3)
         init_ln(self.ln1)
 
     def forward(self, input):
@@ -269,12 +277,15 @@ class AcousticModelTransformer(nn.Module):
         x = F.relu(self.fc5(x)) # [batch_size, 1001, 768]
         x = self.ln1(x)
         x = F.dropout(x, p=0.2, training=self.training, inplace=True)  # [batch_size, 1001, 768]
+
         x = self.pe(x) # [batch_soze, 1001, 768]
         
         x = self.encoder_layer(x)  # [batch_size, 1001, 768]
         x = F.dropout(x, p=0.5, training=self.training, inplace=False)
+        x = self.fc1(x)
+        x = self.fc2(x)
         
-        output = torch.sigmoid(self.fc(x))
+        output = torch.sigmoid(self.fc3(x))
         
         # この下にTransformerのEncoder部分(4層)を書く(to do)
         
