@@ -1,3 +1,4 @@
+audioread==3.0.0
 h5py==2.10.0
 pandas==1.1.2
 librosa==0.6.0
@@ -7,7 +8,7 @@ mir_eval==0.5
 matplotlib==3.0.3
 torchlibrosa==0.0.4
 sox==1.4.0
-torch==1.8.0+cu111
+torch==1.8.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 torchvision==0.9.0
 piano_transcription_inference==0.0.5
 librosa==0.6.0

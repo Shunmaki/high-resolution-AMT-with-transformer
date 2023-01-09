@@ -100,9 +100,9 @@ class PositionalEncoding(nn.Module):
         Args:
             x: Tensor, shape [seq_len, batch_size, embedding_dim]
         """
-        x = x.transpose(0,1)
+        x = x.transpose(0,1) # [batch_size, seq_len, embedding_dim] → [seq_len, batch_size, embedding_dim]
         x = x + self.pe[:x.size(0)]
-        x = x.transpose(0,1)
+        x = x.transpose(0,1)  # [seq_len, batch_size, embedding_dim] → [batch_size, seq_len, embedding_dim]
         return self.dropout(x)
     
 class TransformerEncoder(nn.Module):
@@ -331,7 +331,8 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
         self.frame_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_onset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_offset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
-        self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
+        self.velocity_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        #self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
         
         # after CRNN block
         # only onset and frame is required
