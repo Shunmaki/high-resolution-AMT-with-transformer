@@ -19,6 +19,9 @@ from torch import Tensor
 from torchlibrosa.stft import Spectrogram, LogmelFilterBank # use 'magphase' to extract phase informatinon with magnitude
 # ref: https://github.com/qiuqiangkong/torchlibrosa
 from pytorch_utils import move_data_to_device
+from transformer_encoder import TransformerEncoder
+from transformer_encoder.utils import PositionalEncoding
+
 
 
 # In[2]:
@@ -81,7 +84,7 @@ def init_ln(module):
     elif isinstance(module, nn.LayerNorm):
         module.bias.data.zero_()
         module.weight.data.fill_(1.0)
-
+"""
 class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
@@ -96,15 +99,17 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x: Tensor) -> Tensor:
-        """
+        
         Args:
             x: Tensor, shape [seq_len, batch_size, embedding_dim]
-        """
+        
         x = x.transpose(0,1) # [batch_size, seq_len, embedding_dim] → [seq_len, batch_size, embedding_dim]
         x = x + self.pe[:x.size(0)]
         x = x.transpose(0,1)  # [seq_len, batch_size, embedding_dim] → [batch_size, seq_len, embedding_dim]
         return self.dropout(x)
-    
+"""
+
+"""
 class TransformerEncoder(nn.Module):
     def __init__(self, d_model=768, nhead=8):
         super(TransformerEncoder, self).__init__()
@@ -117,7 +122,7 @@ class TransformerEncoder(nn.Module):
         output = self.transformer_encoder(inputs)
         output = output.transpose(0,1)
         return output
-
+"""
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, momentum):
@@ -235,9 +240,9 @@ class AcousticModelTransformer(nn.Module):
         self.bn5 = nn.BatchNorm1d(768, momentum=momentum)
         
         self.ln1 = nn.LayerNorm(768)
-        self.pe = PositionalEncoding(d_model=768, dropout=0.1)
+        self.pe = PositionalEncoding(d_model=768, dropout=0.1, max_len=2000)
         
-        self.encoder_layer = TransformerEncoder()
+        self.encoder_layer = TransformerEncoder(d_model=768, d_ff=1024, n_heads=8, n_layers=6, dropout=0.1)
 
         self.fc1 = nn.Linear(768, 512, bias=True)
         self.fc2 = nn.Linear(512, 256, bias=True)
