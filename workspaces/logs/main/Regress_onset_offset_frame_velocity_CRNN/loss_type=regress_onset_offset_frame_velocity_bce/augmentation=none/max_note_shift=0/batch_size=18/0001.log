@@ -1,6 +1,0 @@
-Thu, 15 Dec 2022 13:16:18 main.py[line:106] INFO Namespace(augmentation='none', batch_size=18, cuda=True, early_stop=15000, filename='main', learning_rate=0.0005, loss_type='regress_onset_offset_frame_velocity_bce', max_note_shift=0, mini_data=False, mode='train', model_type='Regress_onset_offset_frame_velocity_CRNN', reduce_iteration=10000, resume_iteration=0, workspace='/notebooks/maki/high-resolution-AMT-with-transformer/workspaces')
-Thu, 15 Dec 2022 13:16:18 main.py[line:109] INFO Using GPU.
-Thu, 15 Dec 2022 13:16:19 data_generator.py[line:218] INFO train segments: 0
-Thu, 15 Dec 2022 13:16:19 data_generator.py[line:303] INFO Evaluate train segments: 0
-Thu, 15 Dec 2022 13:16:19 data_generator.py[line:303] INFO Evaluate validation segments: 0
-Thu, 15 Dec 2022 13:16:19 data_generator.py[line:303] INFO Evaluate test segments: 0
