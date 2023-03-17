@@ -134,12 +134,12 @@ class ScoreCalculator(object):
         self.frames_per_second = config.frames_per_second
         self.classes_num = config.classes_num
         self.velocity_scale = config.velocity_scale
-        self.velocity = True  # True | False  Note4での評価を行うか
+        self.velocity = False  # True | False  Note4での評価を行うか
         self.pedal = False
 
         self.evaluate_frame = True # True | False  frameレベルでの評価を行うか
         self.onset_tolerance = 0.05
-        self.offset_ratio = 0.2  # None | 0.2  Note3での評価を行うか
+        self.offset_ratio = None  # None | 0.2  Note3での評価を行うか
         self.offset_min_tolerance = 0.05
 
         self.pedal_offset_threshold = 0.2

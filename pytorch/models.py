@@ -283,16 +283,14 @@ class AcousticModelTransformer(nn.Module):
         x = self.ln1(x)
         x = F.dropout(x, p=0.2, training=self.training, inplace=True)  # [batch_size, 1001, 768]
 
-        x = self.pe(x) # [batch_soze, 1001, 768]
+        x = self.pe(x) # [batch_size, 1001, 768]
         
-        x = self.encoder_layer(x)  # [batch_size, 1001, 768]
+        x = self.encoder_layer(x, mask=None)  # [batch_size, 1001, 768]
         x = F.dropout(x, p=0.5, training=self.training, inplace=False)
-        x = self.fc1(x)
-        x = self.fc2(x)
+        x = self.fc1(x) # [batch_size, 1001, 512]
+        x = self.fc2(x) # [batch_size, 1001, 256]
         
-        output = torch.sigmoid(self.fc3(x))
-        
-        # この下にTransformerのEncoder部分(4層)を書く(to do)
+        output = torch.sigmoid(self.fc3(x)) # [batch_size, 256, 88]
         
         return output
 
@@ -336,8 +334,8 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
         self.frame_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_onset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
         self.reg_offset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
-        self.velocity_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
-        #self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
+        #self.velocity_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
         
         # after CRNN block
         # only onset and frame is required
@@ -410,77 +408,148 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
 # In[18]:
 
 
-class Regress_pedal_CRNN(nn.Module):
+# regression
+class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
     def __init__(self, frames_per_second, classes_num):
-        super(Regress_pedal_CRNN, self).__init__()
-
+        super(Regress_onset_offset_frame_velocity_CRNN, self).__init__()
+        
         sample_rate = 16000
         window_size = 2048
         hop_size = sample_rate // frames_per_second
         mel_bins = 229
         fmin = 30
         fmax = sample_rate // 2
-
+        
         window = 'hann'
         center = True
         pad_mode = 'reflect'
         ref = 1.0
         amin = 1e-10
         top_db = None
-
+        
         midfeat = 1792
         momentum = 0.01
-
-        # Spectrogram extractor
-        self.spectrogram_extractor = Spectrogram(n_fft=window_size, 
-            hop_length=hop_size, win_length=window_size, window=window, 
+        
+        # Spectrogram
+        self.spectrogram_extractor = Spectrogram(n_fft=window_size,
+            hop_length=hop_size, win_length=window_size, window=window,
             center=center, pad_mode=pad_mode, freeze_parameters=True)
-
-        # Logmel feature extractor
-        self.logmel_extractor = LogmelFilterBank(sr=sample_rate, 
-            n_fft=window_size, n_mels=mel_bins, fmin=fmin, fmax=fmax, ref=ref, 
+        
+        # Logmel
+        self.logmel_extractor = LogmelFilterBank(sr=sample_rate,
+            n_fft=window_size, n_mels=mel_bins, fmin=fmin, fmax=fmax, ref=ref,
             amin=amin, top_db=top_db, freeze_parameters=True)
-
+        
+        # phase
+        self.pt_stft_extractor = STFT(n_fft=window_size, hop_length=hop_size,
+            win_length=window_size, window=window, center=center, pad_mode=pad_mode,
+            freeze_parameters=True)
+    
         self.bn0 = nn.BatchNorm2d(mel_bins, momentum)
-
-        self.reg_pedal_onset_model = AcousticModelCRnn8Dropout(1, midfeat, momentum)
-        self.reg_pedal_offset_model = AcousticModelCRnn8Dropout(1, midfeat, momentum)
-        self.reg_pedal_frame_model = AcousticModelCRnn8Dropout(1, midfeat, momentum)
+        
+        self.frame_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.reg_onset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.reg_offset_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        #self.velocity_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
+        self.velocity_model = AcousticModelTransformer(classes_num, midfeat, momentum)
+        
+        # after CRNN block
+        # only onset and frame is required
+        # "attention": figs (high_resolution and exploring transformer's pottential) is different but same model expect velocity network
+        self.reg_onset_gru = nn.GRU(input_size=88 * 2+1, hidden_size=256, num_layers=1,
+            bias=True, batch_first=True, dropout=0., bidirectional=True)
+        self.reg_onset_fc = nn.Linear(512, classes_num, bias=True)
+        
+        self.frame_gru = nn.GRU(input_size=88 * 3, hidden_size=256, num_layers=1,
+            bias=True, batch_first=True, dropout=0., bidirectional=True)
+        self.frame_fc = nn.Linear(512, classes_num, bias=True)
         
         self.init_weight()
-
+        
     def init_weight(self):
         init_bn(self.bn0)
+        init_gru(self.reg_onset_gru)
+        init_gru(self.frame_gru)
+        init_layer(self.reg_onset_fc)
+        init_layer(self.frame_fc)
+        
+    # 画像を横方向で微分
+    def calc_div(self, spec, change=True):
+        if change:
+            spec = spec.transpose(3,2) # (時間,周波数) → (周波数,時間)
+        
+        kernel = torch.FloatTensor([-1, 1, 0])
+        kernel = kernel.expand(1, 1, 1, 3)
+        IF = F.conv2d(spec, kernel, padding=(0,1))
+        return IF
+    
+    # whase wrappingの公式(torch_ver)
+    def phase_wrapping_torch(self, spec):
+        spec = torch.where(spec > np.pi, spec - 2 * np.pi, spec)
+        spec = torch.where(spec < -np.pi, spec + 2 * np.pi, spec)
+        return spec
         
     def forward(self, input):
         """
         Args:
-          input: (batch_size, data_length)
+            input: (batch_size, data_length)
+        
         Outputs:
-          output_dict: dict, {
-            'reg_onset_output': (batch_size, time_steps, classes_num),
-            'reg_offset_output': (batch_size, time_steps, classes_num),
-            'frame_output': (batch_size, time_steps, classes_num),
-            'velocity_output': (batch_size, time_steps, classes_num)
-          }
+            output_dict: dict, {
+              'reg_onset_output': (batch_size, time_steps, classes_num),
+              'reg_offset_output': (batch_size, time_steps, classes_num),
+              'frame_output': (batch_size, time_steps, classes_num),
+              'velocity_output': (batch_size, time_steps, classes_num)
+            }
         """
+        
+        # phase特徴量を求める
+        # 位相スペクトログラムを作成
+        (pt_stft_real, pt_stft_imag) = self.pt_stft_extractor.forward(input)
+        phase = torch.atan2(pt_stft_imag, pt_stft_real) # (1,1,1001(時間),1025(周波数))  ***atan2の引数は第一：y軸(imaginary part) 第二：x軸(real part)***
+        # 横方向で微分 (1回目)
+        IF = self.calc_div(phase)
+        IF = self.phase_wrapping_torch(IF)
 
-        x = self.spectrogram_extractor(input)   # (batch_size, 1, time_steps, freq_bins)
-        x = self.logmel_extractor(x)    # (batch_size, 1, time_steps, mel_bins)
-
+        # 横方向で微分(2回目)
+        IF = self.calc_div(IF, change=False)
+        IF = self.phase_wrapping_torch(IF)
+        IF = torch.abs(IF)
+        IF = torch.sum(IF, axis=2).transpose(1,2) # [batch_size, time_steps, n_dim(1)]
+        
+        
+        x = self.spectrogram_extractor(input) # (batch_size, 1, time_steps, freq_bins)
+        x = self.logmel_extractor(x) # (batch_size, 1, time_step, freq_bins)
+        
         x = x.transpose(1, 3)
         x = self.bn0(x)
         x = x.transpose(1, 3)
-
-        reg_pedal_onset_output = self.reg_pedal_onset_model(x)  # (batch_size, time_steps, classes_num)
-        reg_pedal_offset_output = self.reg_pedal_offset_model(x)  # (batch_size, time_steps, classes_num)
-        pedal_frame_output = self.reg_pedal_frame_model(x)  # (batch_size, time_steps, classes_num)
+        
+        frame_output = self.frame_model(x)
+        reg_onset_output = self.reg_onset_model(x)
+        reg_offset_output = self.reg_offset_model(x)
+        velocity_output = self.velocity_model(x)
+        
+        # Concatenete veloacity and onset output to regress final onset output
+        x = torch.cat((reg_onset_output, (reg_onset_output ** 0.5) * velocity_output.detach(), IF), dim=2)
+        (x, _) = self.reg_onset_gru(x)
+        print(x.shape)
+        x = F.dropout(x, p=0.5, training=self.training, inplace=False)
+        reg_onset_output = torch.sigmoid(self.reg_onset_fc(x))
+        """(batch_size, time_steps, classes_num)"""
+        
+        # concatenate on/offset and frame outputs to classifier final pitch output
+        x = torch.cat((frame_output, reg_onset_output.detach(), reg_offset_output.detach()), dim=2)
+        (x, _) = self.frame_gru(x)
+        x = F.dropout(x, p=0.5, training=self.training, inplace=False)
+        frame_output = torch.sigmoid(self.frame_fc(x)) # (batch_size,  time_steps, classes_num)
         
         output_dict = {
-            'reg_pedal_onset_output': reg_pedal_onset_output, 
-            'reg_pedal_offset_output': reg_pedal_offset_output,
-            'pedal_frame_output': pedal_frame_output}
-
+            'reg_onset_output': reg_onset_output,
+            'reg_offset_output': reg_offset_output,
+            'frame_output': frame_output,
+            'velocity_output': velocity_output}
+        
         return output_dict
 
 
