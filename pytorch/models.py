@@ -440,11 +440,6 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
             n_fft=window_size, n_mels=mel_bins, fmin=fmin, fmax=fmax, ref=ref,
             amin=amin, top_db=top_db, freeze_parameters=True)
         
-        # phase
-        self.pt_stft_extractor = STFT(n_fft=window_size, hop_length=hop_size,
-            win_length=window_size, window=window, center=center, pad_mode=pad_mode,
-            freeze_parameters=True)
-    
         self.bn0 = nn.BatchNorm2d(mel_bins, momentum)
         
         self.frame_model = AcousticModelCRnn8Dropout(classes_num, midfeat, momentum)
@@ -473,21 +468,7 @@ class Regress_onset_offset_frame_velocity_CRNN(nn.Module):
         init_layer(self.reg_onset_fc)
         init_layer(self.frame_fc)
         
-    # 画像を横方向で微分
-    def calc_div(self, spec, change=True):
-        if change:
-            spec = spec.transpose(3,2) # (時間,周波数) → (周波数,時間)
-        
-        kernel = torch.FloatTensor([-1, 1, 0])
-        kernel = kernel.expand(1, 1, 1, 3)
-        IF = F.conv2d(spec, kernel, padding=(0,1))
-        return IF
-    
-    # whase wrappingの公式(torch_ver)
-    def phase_wrapping_torch(self, spec):
-        spec = torch.where(spec > np.pi, spec - 2 * np.pi, spec)
-        spec = torch.where(spec < -np.pi, spec + 2 * np.pi, spec)
-        return spec
+
         
     def forward(self, input):
         """
